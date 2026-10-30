@@ -1,6 +1,231 @@
 <!doctype html>
 <html lang="pl">
+<head>
   <meta charset="utf-8">
-  <title>Moja strona</title>
-  <h1>Witaj na mojej stronie!</h1>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#17151f">
+  <title>Blog Twist</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #111018;
+      --panel: #1c1a26;
+      --text: #f5f2ff;
+      --muted: #b8b2c8;
+      --accent: #c5ff4a;
+      --pink: #ff62a5;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: system-ui, sans-serif;
+      line-height: 1.6;
+    }
+
+    a { color: inherit; }
+
+    header {
+      padding: 18px 6%;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 20px;
+      border-bottom: 1px solid #ffffff1a;
+    }
+
+    .logo {
+      color: var(--accent);
+      font-size: 1.5rem;
+      font-weight: 900;
+      text-decoration: none;
+      letter-spacing: -1px;
+    }
+
+    nav { display: flex; gap: 18px; }
+    nav a { color: var(--muted); text-decoration: none; }
+    nav a:hover { color: var(--accent); }
+
+    main { width: min(1100px, 88%); margin: 0 auto; }
+
+    .hero {
+      padding: 72px 0 48px;
+      display: grid;
+      grid-template-columns: 1.3fr 0.7fr;
+      align-items: center;
+      gap: 36px;
+    }
+
+    .tag {
+      color: var(--accent);
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 2px;
+      font-size: .8rem;
+    }
+
+    h1 {
+      font-size: clamp(2.7rem, 7vw, 5.5rem);
+      line-height: .98;
+      letter-spacing: -4px;
+      margin: 12px 0 20px;
+    }
+
+    .hero p, .muted { color: var(--muted); }
+
+    .hero-art {
+      min-height: 260px;
+      border-radius: 28px;
+      background: radial-gradient(circle at 70% 30%, #ff62a5, transparent 35%),
+                  linear-gradient(135deg, #4734a5, #17151f 70%);
+      display: grid;
+      place-items: center;
+      font-size: 5rem;
+    }
+
+    .search {
+      background: var(--panel);
+      padding: 20px;
+      border-radius: 18px;
+      margin: 8px 0 50px;
+    }
+
+    .search label { display: block; font-weight: 800; margin-bottom: 10px; }
+
+    .search-row { display: flex; gap: 10px; }
+
+    input {
+      flex: 1;
+      min-width: 0;
+      padding: 14px 16px;
+      border: 1px solid #ffffff30;
+      border-radius: 10px;
+      background: #111018;
+      color: white;
+      font: inherit;
+    }
+
+    button {
+      padding: 14px 20px;
+      border: 0;
+      border-radius: 10px;
+      background: var(--accent);
+      color: #17151f;
+      font: inherit;
+      font-weight: 800;
+      cursor: pointer;
+    }
+
+    button:hover { filter: brightness(.9); }
+
+    .section-title { font-size: 1.8rem; margin-bottom: 20px; }
+
+    .posts {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 18px;
+      margin-bottom: 60px;
+    }
+
+    .card {
+      padding: 22px;
+      border-radius: 16px;
+      background: var(--panel);
+      border: 1px solid #ffffff12;
+    }
+
+    .card .emoji { font-size: 2rem; }
+    .card h3 { margin: 12px 0 6px; }
+    .card p { color: var(--muted); margin-bottom: 0; }
+
+    footer {
+      padding: 28px 6%;
+      text-align: center;
+      color: var(--muted);
+      border-top: 1px solid #ffffff1a;
+    }
+
+    @media (max-width: 700px) {
+      header { align-items: flex-start; flex-direction: column; }
+      .hero { grid-template-columns: 1fr; padding-top: 48px; }
+      .hero-art { min-height: 180px; }
+      .posts { grid-template-columns: 1fr; }
+      h1 { letter-spacing: -2px; }
+    }
+
+    @media (max-width: 420px) {
+      main { width: 92%; }
+      .search-row { flex-direction: column; }
+      button { width: 100%; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <a class="logo" href="#">BLOG TWIST ✦</a>
+    <nav aria-label="Menu główne">
+      <a href="#wpisy">Wpisy</a>
+      <a href="#youtube">YouTube</a>
+      <a href="#omnie">O blogu</a>
+    </nav>
+  </header>
+
+  <main>
+    <section class="hero" id="omnie">
+      <div>
+        <span class="tag">Pomysły • Internet • Inspiracje</span>
+        <h1>Wkręć się<br>w dobry twist.</h1>
+        <p>Luźny blog o ciekawych rzeczach, kreatywnych pomysłach i filmach wartych obejrzenia.</p>
+      </div>
+      <div class="hero-art" aria-hidden="true">✦</div>
+    </section>
+
+    <section class="search" id="youtube">
+      <form id="youtube-search">
+        <label for="query">Szukaj filmów na YouTube</label>
+        <div class="search-row">
+          <input id="query" type="search" placeholder="Np. ciekawostki, gry, muzyka…" required>
+          <button type="submit">Szukaj na YouTube</button>
+        </div>
+      </form>
+    </section>
+
+    <section id="wpisy">
+      <h2 class="section-title">Najnowsze wpisy</h2>
+      <div class="posts">
+        <article class="card">
+          <div class="emoji">💡</div>
+          <h3>Pomysł na dziś</h3>
+          <p>Dodaj tutaj krótki opis swojego pierwszego wpisu.</p>
+        </article>
+        <article class="card">
+          <div class="emoji">🎮</div>
+          <h3>Co warto sprawdzić?</h3>
+          <p>Podziel się ciekawym kanałem, grą albo odkryciem z internetu.</p>
+        </article>
+        <article class="card">
+          <div class="emoji">✨</div>
+          <h3>Twój własny twist</h3>
+          <p>Zmień te teksty na tematy, o których chcesz prowadzić blog.</p>
+        </article>
+      </div>
+    </section>
+  </main>
+
+  <footer>© 2026 Blog Twist · Stworzone z pomysłem ✦</footer>
+
+  <script>
+    document.getElementById("youtube-search").addEventListener("submit", function (event) {
+      event.preventDefault();
+      const query = document.getElementById("query").value.trim();
+      if (query) {
+        const url = "https://www.youtube.com/results?search_query=" + encodeURIComponent(query);
+        window.open(url, "_blank", "noopener,noreferrer");
+      }
+    });
+  </script>
+</body>
 </html>
