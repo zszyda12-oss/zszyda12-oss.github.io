@@ -12,7 +12,7 @@
     header { position:sticky; top:0; z-index:2; display:flex; gap:14px; align-items:center;
       padding:12px 5%; background:var(--card); border-bottom:1px solid var(--line) }
     .logo { font-size:22px; font-weight:bold; color:#d22; white-space:nowrap }
-    input,button { font:inherit; padding:10px; border:1px solid #888; border-radius:5px; background:var(--card); color:var(--fg) }
+    input,button,select { font:inherit; padding:10px; border:1px solid #888; border-radius:5px; background:var(--card); color:var(--fg) }
     input { min-width:0 }
     button { cursor:pointer }
     button:hover { opacity:.75 }
@@ -76,6 +76,7 @@
     <div class="row">
       <input id="title" placeholder="Tytuł filmu">
       <input id="videoFile" type="file" accept="video/*">
+      <select id="category"></select>
       <button id="uploadButton">Opublikuj</button>
     </div>
     <p class="muted">Nie wrzucaj prywatnych nagrań. Pliki w publicznym buckecie mogą być oglądane przez osoby mające link.</p>
@@ -103,7 +104,8 @@
     <p class="muted">Transmisja działa peer-to-peer (WebRTC) – nadawca łączy się bezpośrednio z widzami, więc najlepiej sprawdza się dla kilku–kilkunastu osób.</p>
   </section>
 
-  <h2>Filmy</h2>
+  <div class="row"><h2 style="margin:0;flex:1">Filmy</h2>
+    <select id="catFilter"><option value="">Wszystkie kategorie</option></select></div>
   <div id="videos"></div>
 </main>
 
@@ -121,6 +123,12 @@
   let names = {};
   let liveRows = [];
   let rtc = null;
+  const CATS = ["Muzyka", "Gry", "Edukacja", "Rozrywka", "Sport", "Vlogi", "Inne"];
+  CATS.forEach(c => {
+    $("category").add(new Option(c, c));
+    $("catFilter").add(new Option(c, c));
+  });
+  $("category").value = "Inne";
   const myId = crypto.randomUUID();
   const ICE = { iceServers: [{ urls: "stun:stun.l.google.com:19302" }] };
 
@@ -152,7 +160,7 @@
 
   async function loadVideos() {
     const { data, error } = await db.from("videos")
-      .select("id,user_id,title,description,storage_path,created_at")
+      .select("id,user_id,title,description,storage_path,category,created_at")
       .order("created_at", { ascending: false });
     if (error) { say("Błąd pobierania filmów: " + error.message); return; }
     allVideos = data || [];
@@ -161,7 +169,8 @@
 
   async function drawVideos() {
     const term = $("filter").value.trim().toLowerCase();
-    const list = allVideos.filter(v => v.title.toLowerCase().includes(term));
+    const cat = $("catFilter").value;
+    const list = allVideos.filter(v => v.title.toLowerCase().includes(term) && (!cat || (v.category || "Inne") === cat));
     if (!list.length) { $("videos").innerHTML = "<p>Nie ma jeszcze filmów.</p>"; return; }
 
     await loadNames();
@@ -185,7 +194,7 @@
         <video controls preload="metadata" src="${esc(file.publicUrl)}"></video>
         <div>
           <h3>${esc(v.title)}</h3>
-          <p class="muted">Kanał: ${esc(names[v.user_id] || "Kanał")} · ${new Date(v.created_at).toLocaleDateString("pl-PL")}</p>
+          <p class="muted">Kanał: ${esc(names[v.user_id] || "Kanał")} · ${new Date(v.created_at).toLocaleDateString("pl-PL")} · 🏷️ ${esc(v.category || "Inne")}</p>
           <button data-react="${v.id}" data-value="1">👍 ${likes || 0}${mine?.reaction === 1 ? " ✓" : ""}</button>
           <button data-react="${v.id}" data-value="-1">👎 ${dislikes || 0}${mine?.reaction === -1 ? " ✓" : ""}</button>
           ${user && user.id !== v.user_id ? `<button data-sub="${v.user_id}">${subscribed ? "Subskrybujesz ✓" : "Subskrybuj kanał"}</button>` : ""}
@@ -241,7 +250,7 @@
     const { error: uploadError } = await db.storage.from("videos").upload(path, file);
     if (uploadError) return say("Upload nieudany: " + uploadError.message);
     const { error } = await db.from("videos").insert({
-      user_id:user.id, title, description:"", storage_path:path
+      user_id:user.id, title, description:"", storage_path:path, category:$("category").value
     });
     if (error) return say("Plik wysłano, ale zapis filmu nie powiódł się: " + error.message);
     $("title").value = "";
@@ -453,6 +462,7 @@
   setInterval(() => { if (!document.hidden) loadLive(); }, 20000);
 
   $("filter").oninput = drawVideos;
+  $("catFilter").onchange = drawVideos;
   db.auth.onAuthStateChange(() => load());
   await load();
 </script>
