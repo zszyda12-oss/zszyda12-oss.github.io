@@ -5,29 +5,39 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Twist Video</title>
   <style>
+    :root { --bg:#f1f1f1; --card:#fff; --fg:#171717; --line:#ddd; --muted:#666 }
+    @media(prefers-color-scheme:dark) { :root { --bg:#0f0f0f; --card:#1c1c1c; --fg:#eee; --line:#333; --muted:#aaa } }
     * { box-sizing: border-box }
-    body { margin: 0; background:#f1f1f1; color:#171717; font:16px Arial,sans-serif }
+    body { margin: 0; background:var(--bg); color:var(--fg); font:16px Arial,sans-serif }
     header { position:sticky; top:0; z-index:2; display:flex; gap:14px; align-items:center;
-      padding:12px 5%; background:white; border-bottom:1px solid #ddd }
+      padding:12px 5%; background:var(--card); border-bottom:1px solid var(--line) }
     .logo { font-size:22px; font-weight:bold; color:#d22; white-space:nowrap }
-    input,button { font:inherit; padding:10px; border:1px solid #bbb; border-radius:5px }
+    input,button { font:inherit; padding:10px; border:1px solid #888; border-radius:5px; background:var(--card); color:var(--fg) }
     input { min-width:0 }
-    button { cursor:pointer; background:white }
-    button:hover { background:#eee }
+    button { cursor:pointer }
+    button:hover { opacity:.75 }
     .search { flex:1 }
     main { width:min(1000px,92%); margin:24px auto }
-    section,.video { background:white; padding:18px; border-radius:8px; margin-bottom:18px }
-    .row { display:flex; flex-wrap:wrap; align-items:center; gap:10px }
+    section,.video { background:var(--card); padding:18px; border-radius:8px; margin-bottom:18px }
+    .row { display:flex; flex-wrap:wrap; align-items:center; gap:10px; margin:6px 0 }
     .row input { flex:1 }
     .video { display:grid; grid-template-columns:minmax(180px,320px) 1fr; gap:16px }
     video { width:100%; max-height:220px; background:#111; border-radius:6px }
-    .muted { color:#666; font-size:14px }
-    .danger { color:#b00 }
-    #status { margin:12px 0; color:#444 }
+    .muted { color:var(--muted); font-size:14px }
+    .danger { color:#d33 }
+    #status { margin:12px 0; opacity:.8 }
+    .comments { grid-column:1/-1; border-top:1px solid var(--line); padding-top:10px }
+    .comments p { margin:6px 0; font-size:14px }
+    .x { padding:0 6px; border:0; background:none; color:var(--muted) }
+    .live { display:grid; grid-template-columns:1fr 300px; gap:12px; margin:10px 0 }
+    .live video { max-height:420px }
+    .chat { display:flex; flex-direction:column; height:420px }
+    #chatLog { flex:1; overflow:auto; border:1px solid var(--line); border-radius:5px; padding:8px; margin-bottom:8px; font-size:14px }
     @media(max-width:600px) {
       header { flex-wrap:wrap }
       .search { order:3; flex-basis:100% }
-      .video { grid-template-columns:1fr }
+      .video, .live { grid-template-columns:1fr }
+      .chat { height:260px }
     }
   </style>
 </head>
@@ -71,6 +81,28 @@
     <p class="muted">Nie wrzucaj prywatnych nagrań. Pliki w publicznym buckecie mogą być oglądane przez osoby mające link.</p>
   </section>
 
+  <section id="live">
+    <h2>🔴 Na żywo</h2>
+    <div id="goLive" class="row" hidden>
+      <input id="liveTitle" placeholder="Tytuł transmisji">
+      <button id="startCam">Nadaj z kamery</button>
+      <button id="startScreen">Nadaj ekran</button>
+    </div>
+    <div id="liveList"></div>
+    <div id="livePlayer" hidden>
+      <h3 id="liveTitleView"></h3>
+      <div class="live">
+        <video id="liveVideo" autoplay playsinline controls></video>
+        <div class="chat">
+          <div id="chatLog"></div>
+          <div class="row"><input id="chatInput" placeholder="Napisz na czacie" maxlength="300"><button id="chatSend">Wyślij</button></div>
+        </div>
+      </div>
+      <button id="leaveLive" class="danger">Wyjdź / zakończ transmisję</button>
+    </div>
+    <p class="muted">Transmisja działa peer-to-peer (WebRTC) – nadawca łączy się bezpośrednio z widzami, więc najlepiej sprawdza się dla kilku–kilkunastu osób.</p>
+  </section>
+
   <h2>Filmy</h2>
   <div id="videos"></div>
 </main>
@@ -86,6 +118,11 @@
   const $ = id => document.getElementById(id);
   let user = null;
   let allVideos = [];
+  let names = {};
+  let liveRows = [];
+  let rtc = null;
+  const myId = crypto.randomUUID();
+  const ICE = { iceServers: [{ urls: "stun:stun.l.google.com:19302" }] };
 
   function say(text) { $("status").textContent = text; }
   function esc(value="") {
@@ -102,12 +139,15 @@
     $("auth").hidden = !!user;
     $("channel").hidden = !user;
     $("upload").hidden = !user;
+    $("goLive").hidden = !user;
 
     if (user) {
+      if (!rtc?.host) await db.from("live_streams").update({ is_live:false }).eq("user_id", user.id).eq("is_live", true);
       const { data: ch } = await db.from("channels").select("name").eq("id", user.id).maybeSingle();
       $("channelName").value = ch?.name || "";
     }
     await loadVideos();
+    await loadLive();
   }
 
   async function loadVideos() {
@@ -124,8 +164,10 @@
     const list = allVideos.filter(v => v.title.toLowerCase().includes(term));
     if (!list.length) { $("videos").innerHTML = "<p>Nie ma jeszcze filmów.</p>"; return; }
 
-    const { data: channels } = await db.from("channels").select("id,name");
-    const names = Object.fromEntries((channels || []).map(c => [c.id, c.name]));
+    await loadNames();
+    const { data: cs } = await db.from("comments").select("id,video_id,user_id,body,created_at").order("created_at");
+    const byVideo = {};
+    (cs || []).forEach(c => (byVideo[c.video_id] ||= []).push(c));
     const cards = await Promise.all(list.map(async v => {
       const { data: file } = db.storage.from("videos").getPublicUrl(v.storage_path);
       const { count: likes } = await db.from("reactions").select("*", { count:"exact", head:true })
@@ -149,12 +191,20 @@
           ${user && user.id !== v.user_id ? `<button data-sub="${v.user_id}">${subscribed ? "Subskrybujesz ✓" : "Subskrybuj kanał"}</button>` : ""}
           ${user?.id === v.user_id ? `<button class="danger" data-delete="${v.id}" data-path="${esc(v.storage_path)}">Usuń film</button>` : ""}
         </div>
+        <div class="comments">
+          ${(byVideo[v.id] || []).map(c => `<p><b>${esc(names[c.user_id] || "Użytkownik")}</b>: ${esc(c.body)}
+            ${user?.id === c.user_id ? `<button class="x" data-cdel="${c.id}" title="Usuń">✕</button>` : ""}</p>`).join("")}
+          ${user ? `<div class="row"><input id="cm-${v.id}" placeholder="Dodaj komentarz" maxlength="500"><button data-comment="${v.id}">Wyślij</button></div>`
+                 : `<p class="muted">Zaloguj się, aby komentować.</p>`}
+        </div>
       </article>`;
     }));
     $("videos").innerHTML = cards.join("");
 
     document.querySelectorAll("[data-react]").forEach(b => b.onclick = () => react(b.dataset.react, Number(b.dataset.value)));
     document.querySelectorAll("[data-sub]").forEach(b => b.onclick = () => subscribe(b.dataset.sub));
+    document.querySelectorAll("[data-comment]").forEach(b => b.onclick = () => addComment(b.dataset.comment));
+    document.querySelectorAll("[data-cdel]").forEach(b => b.onclick = () => delComment(b.dataset.cdel));
     document.querySelectorAll("[data-delete]").forEach(b => b.onclick = () => removeVideo(b.dataset.delete, b.dataset.path));
   }
 
@@ -230,6 +280,177 @@
     say("Film usunięty.");
     await loadVideos();
   }
+
+
+  // ---------- Pomocnicze ----------
+  async function loadNames() {
+    const { data } = await db.from("channels").select("id,name");
+    names = Object.fromEntries((data || []).map(c => [c.id, c.name]));
+  }
+  const myName = () => names[user.id] || user.email.split("@")[0];
+
+  // ---------- Komentarze ----------
+  async function addComment(videoId) {
+    const input = $("cm-" + videoId);
+    const body = input.value.trim();
+    if (!user) return say("Zaloguj się, aby komentować.");
+    if (!body) return;
+    const { error } = await db.from("comments").insert({ video_id:videoId, user_id:user.id, body });
+    if (error) return say(error.message);
+    await drawVideos();
+  }
+  async function delComment(id) {
+    const { error } = await db.from("comments").delete().eq("id", id);
+    if (error) say(error.message);
+    await drawVideos();
+  }
+
+  // ---------- Transmisje na żywo (WebRTC, sygnalizacja przez Supabase Realtime) ----------
+  async function loadLive() {
+    const since = new Date(Date.now() - 12 * 36e5).toISOString();
+    const { data } = await db.from("live_streams").select("id,user_id,title")
+      .eq("is_live", true).gte("created_at", since).order("created_at", { ascending:false });
+    await loadNames();
+    liveRows = data || [];
+    $("liveList").innerHTML = liveRows.length
+      ? liveRows.map(s => `<div class="row"><span>🔴 <b>${esc(s.title)}</b> · ${esc(names[s.user_id] || "Kanał")}</span>
+          ${rtc?.id === s.id ? "" : `<button data-watch="${s.id}">Oglądaj</button>`}</div>`).join("")
+      : '<p class="muted">Nikt nie nadaje teraz.</p>';
+    document.querySelectorAll("[data-watch]").forEach(b => b.onclick = () => {
+      const row = liveRows.find(x => x.id === b.dataset.watch);
+      if (row) openRoom(row, false, null);
+    });
+  }
+
+  async function addIce(pc, c) {
+    if (!pc) return;
+    if (pc.remoteDescription) { try { await pc.addIceCandidate(c); } catch {} }
+    else (pc._q ||= []).push(c);
+  }
+  async function flushIce(pc) {
+    for (const c of pc._q || []) { try { await pc.addIceCandidate(c); } catch {} }
+    pc._q = [];
+  }
+
+  async function startLive(screen) {
+    if (!user) return say("Zaloguj się, aby nadawać.");
+    if (!navigator.mediaDevices) return say("Ta przeglądarka nie obsługuje transmisji (wymagane HTTPS).");
+    let local;
+    try {
+      local = screen
+        ? await navigator.mediaDevices.getDisplayMedia({ video:true, audio:true })
+        : await navigator.mediaDevices.getUserMedia({ video:true, audio:true });
+    } catch (e) { return say("Brak dostępu do kamery/ekranu: " + e.message); }
+    const title = $("liveTitle").value.trim() || "Transmisja na żywo";
+    const { data, error } = await db.from("live_streams").insert({ user_id:user.id, title, is_live:true }).select().single();
+    if (error) { local.getTracks().forEach(t => t.stop()); return say(error.message); }
+    local.getVideoTracks()[0].onended = leaveRoom;
+    await openRoom(data, true, local);
+    say("Jesteś na żywo.");
+    await loadLive();
+  }
+
+  async function openRoom(row, host, local) {
+    await leaveRoom();
+    rtc = { id:row.id, host, local, pcs:new Map() };
+    const r = rtc;
+    $("livePlayer").hidden = false;
+    $("liveTitleView").textContent = (host ? "Nadajesz: " : "") + row.title;
+    $("chatLog").innerHTML = "";
+    const video = $("liveVideo");
+    video.muted = host;
+    video.srcObject = host ? local : null;
+
+    // czat
+    const { data: old } = await db.from("live_messages").select("author,body")
+      .eq("stream_id", row.id).order("created_at", { ascending:false }).limit(50);
+    (old || []).reverse().forEach(addMsg);
+    r.chat = db.channel("chat-" + row.id)
+      .on("postgres_changes", { event:"INSERT", schema:"public", table:"live_messages", filter:"stream_id=eq." + row.id },
+        p => addMsg(p.new))
+      .subscribe();
+
+    // sygnalizacja WebRTC
+    const ch = r.ch = db.channel("live-" + row.id);
+    const send = (event, payload) => ch.send({ type:"broadcast", event, payload });
+    if (host) {
+      ch.on("broadcast", { event:"join" }, async ({ payload }) => {
+        const pc = new RTCPeerConnection(ICE);
+        r.pcs.set(payload.vid, pc);
+        local.getTracks().forEach(t => pc.addTrack(t, local));
+        pc.onicecandidate = e => e.candidate && send("ice", { to:payload.vid, from:"host", candidate:e.candidate });
+        await pc.setLocalDescription(await pc.createOffer());
+        send("offer", { to:payload.vid, sdp:pc.localDescription });
+      });
+      ch.on("broadcast", { event:"answer" }, async ({ payload }) => {
+        const pc = r.pcs.get(payload.from);
+        if (!pc) return;
+        await pc.setRemoteDescription(payload.sdp);
+        await flushIce(pc);
+      });
+      ch.on("broadcast", { event:"ice" }, ({ payload }) => {
+        if (payload.to === "host") addIce(r.pcs.get(payload.from), payload.candidate);
+      });
+    } else {
+      ch.on("broadcast", { event:"offer" }, async ({ payload }) => {
+        if (payload.to !== myId) return;
+        const pc = r.pc = new RTCPeerConnection(ICE);
+        pc.ontrack = e => { video.srcObject = e.streams[0]; };
+        pc.onicecandidate = e => e.candidate && send("ice", { to:"host", from:myId, candidate:e.candidate });
+        await pc.setRemoteDescription(payload.sdp);
+        await flushIce(pc);
+        await pc.setLocalDescription(await pc.createAnswer());
+        send("answer", { from:myId, sdp:pc.localDescription });
+      });
+      ch.on("broadcast", { event:"ice" }, ({ payload }) => {
+        if (payload.to === myId) addIce(r.pc, payload.candidate);
+      });
+    }
+    ch.subscribe(status => {
+      if (status === "SUBSCRIBED" && !host) {
+        send("join", { vid:myId });
+        setTimeout(() => { if (rtc === r && !video.srcObject) say("Brak sygnału – nadawca może być offline albo sieć blokuje połączenie."); }, 12000);
+      }
+    });
+  }
+
+  async function leaveRoom() {
+    if (!rtc) return;
+    const r = rtc;
+    rtc = null;
+    r.pcs.forEach(p => p.close());
+    r.pc?.close();
+    r.local?.getTracks().forEach(t => t.stop());
+    $("liveVideo").srcObject = null;
+    $("livePlayer").hidden = true;
+    if (r.ch) await db.removeChannel(r.ch);
+    if (r.chat) await db.removeChannel(r.chat);
+    if (r.host) await db.from("live_streams").update({ is_live:false }).eq("id", r.id);
+    await loadLive();
+  }
+
+  function addMsg(m) {
+    const log = $("chatLog");
+    log.insertAdjacentHTML("beforeend", `<div><b>${esc(m.author || "Widz")}</b>: ${esc(m.body)}</div>`);
+    log.scrollTop = log.scrollHeight;
+  }
+  async function sendChat() {
+    if (!user) return say("Zaloguj się, aby pisać na czacie.");
+    if (!rtc) return;
+    const body = $("chatInput").value.trim();
+    if (!body) return;
+    $("chatInput").value = "";
+    const { error } = await db.from("live_messages").insert({ stream_id:rtc.id, user_id:user.id, author:myName(), body });
+    if (error) say(error.message);
+  }
+
+  $("startCam").onclick = () => startLive(false);
+  $("startScreen").onclick = () => startLive(true);
+  $("leaveLive").onclick = leaveRoom;
+  $("chatSend").onclick = sendChat;
+  $("chatInput").onkeydown = e => { if (e.key === "Enter") sendChat(); };
+  window.addEventListener("pagehide", () => { if (rtc?.host) leaveRoom(); });
+  setInterval(() => { if (!document.hidden) loadLive(); }, 20000);
 
   $("filter").oninput = drawVideos;
   db.auth.onAuthStateChange(() => load());
