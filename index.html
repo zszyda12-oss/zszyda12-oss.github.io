@@ -21,6 +21,8 @@
     section,.video { background:var(--card); padding:18px; border-radius:8px; margin-bottom:18px }
     .row { display:flex; flex-wrap:wrap; align-items:center; gap:10px; margin:6px 0 }
     .row input { flex:1 }
+    .row label { display:flex; gap:6px; align-items:center }
+    .row label input { flex:none }
     .video { display:grid; grid-template-columns:minmax(180px,320px) 1fr; gap:16px }
     video { width:100%; max-height:220px; background:#111; border-radius:6px }
     .muted { color:var(--muted); font-size:14px }
@@ -44,8 +46,9 @@
 <body>
 <header>
   <div class="logo">TWIST VIDEO</div>
-  <input id="filter" class="search" placeholder="Szukaj filmów">
+  <input id="filter" class="search" placeholder="Szukaj: tytuł, kanał, kategoria…">
   <span id="who" class="muted">Niezalogowany</span>
+  <button id="guest">Gość</button>
   <button id="logout" hidden>Wyloguj</button>
 </header>
 
@@ -86,6 +89,7 @@
     <h2>🔴 Na żywo</h2>
     <div id="goLive" class="row" hidden>
       <input id="liveTitle" placeholder="Tytuł transmisji">
+      <label title="Mikrofon zostanie udostępniony tylko po zaznaczeniu"><input type="checkbox" id="mic"> 🎤 Mikrofon</label>
       <button id="startCam">Nadaj z kamery</button>
       <button id="startScreen">Nadaj ekran</button>
     </div>
@@ -99,12 +103,14 @@
           <div class="row"><input id="chatInput" placeholder="Napisz na czacie" maxlength="300"><button id="chatSend">Wyślij</button></div>
         </div>
       </div>
+      <button id="micToggle" hidden></button>
       <button id="leaveLive" class="danger">Wyjdź / zakończ transmisję</button>
     </div>
     <p class="muted">Transmisja działa peer-to-peer (WebRTC) – nadawca łączy się bezpośrednio z widzami, więc najlepiej sprawdza się dla kilku–kilkunastu osób.</p>
   </section>
 
-  <div class="row"><h2 style="margin:0;flex:1">Filmy</h2>
+  <div class="row"><h2 style="margin:0;flex:1">Filmy <span id="count" class="muted"></span></h2>
+    <select id="sort"><option value="new">Najnowsze</option><option value="old">Najstarsze</option><option value="az">Tytuł A–Z</option></select>
     <select id="catFilter"><option value="">Wszystkie kategorie</option></select></div>
   <div id="videos"></div>
 </main>
@@ -132,6 +138,11 @@
   const myId = crypto.randomUUID();
   const ICE = { iceServers: [{ urls: "stun:stun.l.google.com:19302" }] };
 
+  const norm = t => String(t || "").toLowerCase().replace(/ł/g, "l").normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  const hit = (fields, q) => {
+    const hay = norm(fields.join(" "));
+    return norm(q).split(/\s+/).filter(Boolean).every(w => hay.includes(w));
+  };
   function say(text) { $("status").textContent = text; }
   function esc(value="") {
     return String(value).replace(/[&<>"']/g, c =>
@@ -142,8 +153,9 @@
     const { data: { user: current }, error } = await db.auth.getUser();
     if (error) say(error.message);
     user = current;
-    $("who").textContent = user?.email || "Niezalogowany";
-    $("logout").hidden = !user;
+    $("who").textContent = user ? (user.is_anonymous ? "Gość" : user.email) : "Niezalogowany";
+    $("logout").hidden = !user || user.is_anonymous;
+    $("guest").textContent = user?.is_anonymous ? "Wyjdź z gościa" : "Gość";
     $("auth").hidden = !!user;
     $("channel").hidden = !user;
     $("upload").hidden = !user;
@@ -164,16 +176,22 @@
       .order("created_at", { ascending: false });
     if (error) { say("Błąd pobierania filmów: " + error.message); return; }
     allVideos = data || [];
+    await loadNames();
     await drawVideos();
   }
 
   async function drawVideos() {
-    const term = $("filter").value.trim().toLowerCase();
     const cat = $("catFilter").value;
-    const list = allVideos.filter(v => v.title.toLowerCase().includes(term) && (!cat || (v.category || "Inne") === cat));
-    if (!list.length) { $("videos").innerHTML = "<p>Nie ma jeszcze filmów.</p>"; return; }
+    const list = allVideos.filter(v =>
+      hit([v.title, v.description, v.category || "Inne", names[v.user_id]], $("filter").value) &&
+      (!cat || (v.category || "Inne") === cat));
+    const sort = $("sort").value;
+    list.sort(sort === "old" ? (a, b) => a.created_at.localeCompare(b.created_at)
+      : sort === "az" ? (a, b) => a.title.localeCompare(b.title, "pl")
+      : (a, b) => b.created_at.localeCompare(a.created_at));
+    $("count").textContent = "(" + list.length + ")";
+    if (!list.length) { $("videos").innerHTML = "<p>" + (allVideos.length ? "Brak wyników dla tego wyszukiwania." : "Nie ma jeszcze filmów.") + "</p>"; return; }
 
-    await loadNames();
     const { data: cs } = await db.from("comments").select("id,video_id,user_id,body,created_at").order("created_at");
     const byVideo = {};
     (cs || []).forEach(c => (byVideo[c.video_id] ||= []).push(c));
@@ -226,6 +244,19 @@
   $("login").onclick = async () => {
     const { error } = await db.auth.signInWithPassword({ email:$("email").value, password:$("password").value });
     say(error ? error.message : "Zalogowano.");
+    await load();
+  };
+
+  $("guest").onclick = async () => {
+    if (user && !user.is_anonymous) return alert("Wyloguj się z konta, aby wejść jako gość.");
+    if (user?.is_anonymous) {
+      if (!confirm("Wyjść z trybu gościa? Stracisz możliwość usuwania filmów i komentarzy dodanych jako gość.")) return;
+      await db.auth.signOut();
+      await load();
+      return say("Wyszedłeś z trybu gościa.");
+    }
+    const { error } = await db.auth.signInAnonymously();
+    say(error ? "Tryb gościa niedostępny: " + error.message + " (włącz „Allow anonymous sign-ins” w Supabase → Authentication → Sign In / Providers)" : "Jesteś gościem – możesz dodawać filmy, komentować i nadawać.");
     await load();
   };
 
@@ -296,7 +327,7 @@
     const { data } = await db.from("channels").select("id,name");
     names = Object.fromEntries((data || []).map(c => [c.id, c.name]));
   }
-  const myName = () => names[user.id] || user.email.split("@")[0];
+  const myName = () => names[user.id] || (user.is_anonymous ? "Gość-" + user.id.slice(0, 4) : user.email.split("@")[0]);
 
   // ---------- Komentarze ----------
   async function addComment(videoId) {
@@ -321,8 +352,9 @@
       .eq("is_live", true).gte("created_at", since).order("created_at", { ascending:false });
     await loadNames();
     liveRows = data || [];
-    $("liveList").innerHTML = liveRows.length
-      ? liveRows.map(s => `<div class="row"><span>🔴 <b>${esc(s.title)}</b> · ${esc(names[s.user_id] || "Kanał")}</span>
+    const shown = liveRows.filter(s => hit([s.title, names[s.user_id]], $("filter").value));
+    $("liveList").innerHTML = shown.length
+      ? shown.map(s => `<div class="row"><span>🔴 <b>${esc(s.title)}</b> · ${esc(names[s.user_id] || "Kanał")}</span>
           ${rtc?.id === s.id ? "" : `<button data-watch="${s.id}">Oglądaj</button>`}</div>`).join("")
       : '<p class="muted">Nikt nie nadaje teraz.</p>';
     document.querySelectorAll("[data-watch]").forEach(b => b.onclick = () => {
@@ -347,9 +379,16 @@
     let local;
     try {
       local = screen
-        ? await navigator.mediaDevices.getDisplayMedia({ video:true, audio:true })
-        : await navigator.mediaDevices.getUserMedia({ video:true, audio:true });
-    } catch (e) { return say("Brak dostępu do kamery/ekranu: " + e.message); }
+        ? await navigator.mediaDevices.getDisplayMedia({ video:true, audio:false })
+        : await navigator.mediaDevices.getUserMedia({ video:true, audio:false });
+      if ($("mic").checked) {
+        const m = await navigator.mediaDevices.getUserMedia({ audio:true });
+        m.getAudioTracks().forEach(t => local.addTrack(t));
+      }
+    } catch (e) {
+      local?.getTracks().forEach(t => t.stop());
+      return say("Brak dostępu do kamery/ekranu/mikrofonu: " + e.message);
+    }
     const title = $("liveTitle").value.trim() || "Transmisja na żywo";
     const { data, error } = await db.from("live_streams").insert({ user_id:user.id, title, is_live:true }).select().single();
     if (error) { local.getTracks().forEach(t => t.stop()); return say(error.message); }
@@ -369,6 +408,14 @@
     const video = $("liveVideo");
     video.muted = host;
     video.srcObject = host ? local : null;
+    const mt = $("micToggle"), at = host ? local.getAudioTracks()[0] : null;
+    mt.hidden = !host;
+    if (host) {
+      const paint = () => mt.textContent = at ? (at.enabled ? "🎤 Mikrofon włączony" : "🔇 Mikrofon wyciszony") : "🔇 Bez mikrofonu";
+      paint();
+      mt.disabled = !at;
+      mt.onclick = () => { at.enabled = !at.enabled; paint(); };
+    }
 
     // czat
     const { data: old } = await db.from("live_messages").select("author,body")
@@ -461,7 +508,9 @@
   window.addEventListener("pagehide", () => { if (rtc?.host) leaveRoom(); });
   setInterval(() => { if (!document.hidden) loadLive(); }, 20000);
 
-  $("filter").oninput = drawVideos;
+  let tm;
+  $("filter").oninput = () => { clearTimeout(tm); tm = setTimeout(() => { drawVideos(); loadLive(); }, 250); };
+  $("sort").onchange = drawVideos;
   $("catFilter").onchange = drawVideos;
   db.auth.onAuthStateChange(() => load());
   await load();
